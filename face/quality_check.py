@@ -1,6 +1,12 @@
 import cv2
 import numpy as np
 
+
+MIN_BRIGHTNESS = 35
+MAX_BRIGHTNESS = 230
+MIN_BLUR_SCORE = 25
+
+
 def check_face_quality(frame, faces, min_face_size: int = 80) -> dict:
     if len(faces) == 0:
         return make_result(False, "Face not detected", face_detected=False, single_face=False)
@@ -13,10 +19,10 @@ def check_face_quality(frame, faces, min_face_size: int = 80) -> dict:
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     brightness = float(np.mean(gray))
-    brightness_ok = 50 <= brightness <= 210
+    brightness_ok = MIN_BRIGHTNESS <= brightness <= MAX_BRIGHTNESS
 
     blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
-    blur_ok = blur_score >= 60
+    blur_ok = blur_score >= MIN_BLUR_SCORE
 
     frame_h, frame_w = frame.shape[:2]
     face_center_x = x + (w / 2)

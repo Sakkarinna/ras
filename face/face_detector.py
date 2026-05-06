@@ -20,9 +20,11 @@ class FaceDetector:
 
     def crop_face(self, frame, face_box):
         x, y, w, h = face_box
-        padding = int(w * 0.2)
-        x1 = max(x - padding, 0)
-        y1 = max(y - padding, 0)
-        x2 = min(x + w + padding, frame.shape[1])
-        y2 = min(y + h + padding, frame.shape[0])
+        horizontal_padding = int(w * 0.35)
+        top_padding = int(h * 0.45)
+        bottom_padding = int(h * 0.25)
+        x1 = max(x - horizontal_padding, 0)
+        y1 = max(y - top_padding, 0)
+        x2 = min(x + w + horizontal_padding, frame.shape[1])
+        y2 = min(y + h + bottom_padding, frame.shape[0])
         return frame[y1:y2, x1:x2]

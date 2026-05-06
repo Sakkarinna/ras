@@ -167,7 +167,7 @@ def main() -> None:
                     continue
 
                 face_crop = face_detector.crop_face(frame, faces[0])
-                face_crop = resize_face(face_crop, (224, 224))
+                face_crop = resize_face(face_crop, (320, 320))
                 image_base64 = image_to_base64(face_crop)
 
                 response = client.send_face_checkin(
