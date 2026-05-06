@@ -2,53 +2,59 @@ import time
 
 import cv2
 
+try:
+    from picamera2 import Picamera2
+except ImportError:  # pragma: no cover - only happens on non-Pi setups
+    Picamera2 = None
+
 
 class CameraService:
     def __init__(self, camera_index: int = 0):
         self.camera_index = camera_index
-        self.capture = None
+        self.camera = None
         self.window_name = "FRAS Camera Preview"
 
     def start(self) -> None:
-        backends = [
-            cv2.CAP_V4L2,
-            cv2.CAP_ANY,
-        ]
+        if Picamera2 is None:
+            raise RuntimeError(
+                "Picamera2 is not installed. Run 'sudo apt install -y python3-picamera2' and recreate the venv with --system-site-packages."
+            )
 
-        for backend in backends:
-            capture = cv2.VideoCapture(self.camera_index, backend)
-            if not capture.isOpened():
-                capture.release()
-                continue
-
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        try:
+            camera = Picamera2(camera_num=self.camera_index)
+            configuration = camera.create_preview_configuration(
+                main={"size": (640, 480), "format": "RGB888"}
+            )
+            camera.configure(configuration)
+            camera.start()
 
             warmed_up = False
-            for _ in range(10):
-                success, frame = capture.read()
-                if success and frame is not None:
+            for _ in range(20):
+                frame = camera.capture_array()
+                if frame is not None and getattr(frame, "size", 0) > 0:
                     warmed_up = True
                     break
                 time.sleep(0.1)
 
-            if warmed_up:
-                self.capture = capture
-                return
+            if not warmed_up:
+                camera.stop()
+                camera.close()
+                raise RuntimeError("Camera opened but no frames were received")
 
-            capture.release()
-
-        raise RuntimeError("Camera could not be opened")
+            self.camera = camera
+        except Exception as error:
+            raise RuntimeError("Camera could not be opened") from error
 
     def read_frame(self):
-        if self.capture is None:
+        if self.camera is None:
             raise RuntimeError("Camera has not been started")
-        success, frame = self.capture.read()
-        if not success or frame is None:
+
+        frame = self.camera.capture_array()
+        if frame is None or getattr(frame, "size", 0) == 0:
             raise RuntimeError("Could not read frame from camera")
-        return frame
+
+        # Picamera2 returns RGB arrays; OpenCV processing in this app expects BGR.
+        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
     def show_preview(self, frame, status_text: str = "", face_boxes=None) -> bool:
         preview_frame = frame.copy()
@@ -71,7 +77,10 @@ class CameraService:
         return key not in (27, ord("q"), ord("Q"))
 
     def release(self) -> None:
-        if self.capture is not None:
-            self.capture.release()
-            self.capture = None
+        if self.camera is not None:
+            try:
+                self.camera.stop()
+            finally:
+                self.camera.close()
+                self.camera = None
         cv2.destroyAllWindows()

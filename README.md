@@ -19,12 +19,16 @@ The Raspberry Pi does not store biometric embeddings and does not permanently st
 ## Install
 
 ```bash
-python3 -m venv .venv
+sudo apt update
+sudo apt install -y python3-picamera2
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 python main.py
 ```
+
+`Picamera2` is installed from Raspberry Pi OS packages, not from `pip`. The `--system-site-packages` flag lets the virtual environment use that system-installed camera library.
 
 ## Required Next.js API endpoints
 
