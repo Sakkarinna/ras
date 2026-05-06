@@ -13,6 +13,17 @@ from utils.logger import setup_logger
 logger = setup_logger()
 
 
+def show_preview_frame(camera: CameraService, face_detector: FaceDetector, status_text: str) -> bool:
+    try:
+        preview_frame = camera.read_frame()
+    except RuntimeError as error:
+        logger.warning("Camera read failed during preview: %s", error)
+        return True
+
+    faces = face_detector.detect_faces(preview_frame)
+    return camera.show_preview(preview_frame, status_text, face_boxes=faces)
+
+
 def main() -> None:
     logger.info("Starting FRAS Raspberry Pi device")
 
@@ -40,17 +51,6 @@ def main() -> None:
 
             device_payload = device_response["data"].get("data", device_response["data"])
             device_id = device_payload.get("deviceId") or device_payload.get("device_id")
-            device_status = device_payload.get("status")
-            if device_status == "DISABLED":
-                show_warning("Device disabled by admin")
-                logger.warning("Device %s is disabled by admin", config.device_code)
-                time.sleep(max(config.checkin_interval_seconds, 5))
-                continue
-            if device_status == "NEEDS_MAINTENANCE":
-                show_warning("Device needs maintenance")
-                logger.warning("Device %s needs maintenance", config.device_code)
-                time.sleep(max(config.checkin_interval_seconds, 5))
-                continue
 
             now = time.monotonic()
             if device_id and now - last_heartbeat >= config.heartbeat_interval_seconds:
@@ -70,6 +70,11 @@ def main() -> None:
             session_response = client.get_active_session(config.device_code)
 
             if not session_response["ok"]:
+                if config.show_camera_preview:
+                    should_continue = show_preview_frame(camera, face_detector, "Waiting for active session")
+                    if not should_continue:
+                        logger.info("Camera preview closed by user")
+                        break
                 if "Device" in session_response["error"]:
                     show_warning(session_response["error"])
                 else:
@@ -94,12 +99,38 @@ def main() -> None:
             session_id = session_data.get("sessionId") or session_data.get("session_id") or session_data.get("id")
 
             if not session_id:
+                if config.show_camera_preview:
+                    should_continue = show_preview_frame(camera, face_detector, "No active session")
+                    if not should_continue:
+                        logger.info("Camera preview closed by user")
+                        break
                 show_idle("No active attendance session")
                 time.sleep(config.checkin_interval_seconds)
                 continue
 
-            frame = camera.read_frame()
+            try:
+                frame = camera.read_frame()
+            except RuntimeError as error:
+                show_warning("Camera frame unavailable")
+                logger.warning("Camera read failed: %s", error)
+                time.sleep(config.checkin_interval_seconds)
+                continue
+
             faces = face_detector.detect_faces(frame)
+            if config.show_camera_preview:
+                should_continue = camera.show_preview(
+                    frame,
+                    "Face detected" if faces else "Waiting for face",
+                    face_boxes=faces,
+                )
+                if not should_continue:
+                    logger.info("Camera preview closed by user")
+                    break
+
+            if not faces:
+                show_idle("Waiting for face")
+                time.sleep(config.checkin_interval_seconds)
+                continue
 
             quality = check_face_quality(frame, faces, config.min_face_size)
             if not quality["passed"]:
