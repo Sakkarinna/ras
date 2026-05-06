@@ -78,7 +78,19 @@ def main() -> None:
                 time.sleep(config.checkin_interval_seconds)
                 continue
 
-            session_data = session_response["data"].get("data", session_response["data"])
+            session_payload = session_response["data"]
+            if not isinstance(session_payload, dict):
+                show_idle("No active attendance session")
+                time.sleep(config.checkin_interval_seconds)
+                continue
+
+            nested_session_data = session_payload.get("data", session_payload)
+            if not isinstance(nested_session_data, dict):
+                show_idle("No active attendance session")
+                time.sleep(config.checkin_interval_seconds)
+                continue
+
+            session_data = nested_session_data
             session_id = session_data.get("sessionId") or session_data.get("session_id") or session_data.get("id")
 
             if not session_id:
