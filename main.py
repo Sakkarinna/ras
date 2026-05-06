@@ -32,6 +32,7 @@ def main() -> None:
     client = FrasClient(config.api_base_url, config.device_token, config.request_timeout)
     device_id: int | None = None
     last_heartbeat = 0.0
+    last_submission = 0.0
 
     try:
         camera.start()
@@ -108,73 +109,100 @@ def main() -> None:
                 time.sleep(config.checkin_interval_seconds)
                 continue
 
-            try:
-                frame = camera.read_frame()
-            except RuntimeError as error:
-                show_warning("Camera frame unavailable")
-                logger.warning("Camera read failed: %s", error)
-                time.sleep(config.checkin_interval_seconds)
-                continue
+            session_refresh_started = time.monotonic()
+            while True:
+                now = time.monotonic()
+                if device_id and now - last_heartbeat >= config.heartbeat_interval_seconds:
+                    health = {
+                        "cameraReady": True,
+                        "diskOk": check_disk_space(),
+                        "serverReachable": check_server(config.api_base_url, config.request_timeout),
+                        "issueSummary": None,
+                    }
+                    if not health["diskOk"]:
+                        health["issueSummary"] = "Low disk space on Raspberry Pi"
+                    heartbeat = client.send_heartbeat(int(device_id), health)
+                    if not heartbeat["ok"]:
+                        logger.warning("Heartbeat failed: %s", heartbeat["error"])
+                    last_heartbeat = now
 
-            faces = face_detector.detect_faces(frame)
-            if config.show_camera_preview:
-                should_continue = camera.show_preview(
-                    frame,
-                    "Face detected" if faces else "Waiting for face",
-                    face_boxes=faces,
-                )
-                if not should_continue:
-                    logger.info("Camera preview closed by user")
+                if now - session_refresh_started >= config.checkin_interval_seconds:
                     break
 
-            if not faces:
-                show_idle("Waiting for face")
-                time.sleep(config.checkin_interval_seconds)
-                continue
+                try:
+                    frame = camera.read_frame()
+                except RuntimeError as error:
+                    show_warning("Camera frame unavailable")
+                    logger.warning("Camera read failed: %s", error)
+                    time.sleep(config.frame_loop_delay_seconds)
+                    continue
 
-            quality = check_face_quality(frame, faces, config.min_face_size)
-            if not quality["passed"]:
-                show_warning(quality["message"])
-                logger.info("Quality failed: %s", quality["message"])
-                time.sleep(config.checkin_interval_seconds)
-                continue
+                faces = face_detector.detect_faces(frame)
+                quality = check_face_quality(frame, faces, config.min_face_size)
+                preview_status = quality["message"] if faces else "Waiting for face"
 
-            face_crop = face_detector.crop_face(frame, faces[0])
-            face_crop = resize_face(face_crop, (224, 224))
-            image_base64 = image_to_base64(face_crop)
+                if config.show_camera_preview:
+                    should_continue = camera.show_preview(
+                        frame,
+                        preview_status,
+                        face_boxes=faces,
+                    )
+                    if not should_continue:
+                        logger.info("Camera preview closed by user")
+                        return
 
-            response = client.send_face_checkin(
-                config.device_code,
-                int(session_id),
-                image_base64,
-                quality,
-            )
+                if not faces:
+                    show_idle("Waiting for face")
+                    time.sleep(config.frame_loop_delay_seconds)
+                    continue
 
-            if not response["ok"]:
-                show_error("Check-in failed")
-                logger.error("Check-in failed: %s", response["error"])
-                time.sleep(config.checkin_interval_seconds)
-                continue
+                if not quality["passed"]:
+                    show_warning(quality["message"])
+                    logger.info("Quality failed: %s", quality["message"])
+                    time.sleep(config.frame_loop_delay_seconds)
+                    continue
 
-            result = response["data"].get("data", response["data"])
-            status = result.get("status")
-            message = result.get("message", "Check-in processed")
+                if now - last_submission < config.submit_cooldown_seconds:
+                    time.sleep(config.frame_loop_delay_seconds)
+                    continue
 
-            if status == "recognized":
-                student_name = result.get("studentName", "Student")
-                attendance_status = result.get("attendanceStatus", "")
-                show_success(f"{student_name}: {attendance_status}")
-            elif status == "duplicate":
-                show_warning("Already checked in")
-            elif status == "unknown":
-                show_warning("Face not recognized")
-            elif status == "no_active_session":
-                show_idle("No active session")
-            else:
-                show_idle(message)
+                face_crop = face_detector.crop_face(frame, faces[0])
+                face_crop = resize_face(face_crop, (224, 224))
+                image_base64 = image_to_base64(face_crop)
 
-            logger.info("Server result: %s", result)
-            time.sleep(config.checkin_interval_seconds)
+                response = client.send_face_checkin(
+                    config.device_code,
+                    int(session_id),
+                    image_base64,
+                    quality,
+                )
+                last_submission = now
+
+                if not response["ok"]:
+                    show_error("Check-in failed")
+                    logger.error("Check-in failed: %s", response["error"])
+                    time.sleep(config.frame_loop_delay_seconds)
+                    continue
+
+                result = response["data"].get("data", response["data"])
+                status = result.get("status")
+                message = result.get("message", "Check-in processed")
+
+                if status == "recognized":
+                    student_name = result.get("studentName", "Student")
+                    attendance_status = result.get("attendanceStatus", "")
+                    show_success(f"{student_name}: {attendance_status}")
+                elif status == "duplicate":
+                    show_warning("Already checked in")
+                elif status == "unknown":
+                    show_warning("Face not recognized")
+                elif status == "no_active_session":
+                    show_idle("No active session")
+                else:
+                    show_idle(message)
+
+                logger.info("Server result: %s", result)
+                time.sleep(config.frame_loop_delay_seconds)
 
     except KeyboardInterrupt:
         logger.info("Stopped by user")

@@ -14,6 +14,8 @@ class Config:
     request_timeout: int = int(os.getenv("REQUEST_TIMEOUT", "10"))
     checkin_interval_seconds: int = int(os.getenv("CHECKIN_INTERVAL_SECONDS", "2"))
     heartbeat_interval_seconds: int = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30"))
+    frame_loop_delay_seconds: float = float(os.getenv("FRAME_LOOP_DELAY_SECONDS", "0.05"))
+    submit_cooldown_seconds: float = float(os.getenv("SUBMIT_COOLDOWN_SECONDS", "2"))
     min_face_size: int = int(os.getenv("MIN_FACE_SIZE", "80"))
 
 config = Config()

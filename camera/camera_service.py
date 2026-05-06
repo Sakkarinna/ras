@@ -1,3 +1,5 @@
+import time
+
 import cv2
 
 
@@ -8,9 +10,37 @@ class CameraService:
         self.window_name = "FRAS Camera Preview"
 
     def start(self) -> None:
-        self.capture = cv2.VideoCapture(self.camera_index)
-        if not self.capture.isOpened():
-            raise RuntimeError("Camera could not be opened")
+        backends = [
+            cv2.CAP_V4L2,
+            cv2.CAP_ANY,
+        ]
+
+        for backend in backends:
+            capture = cv2.VideoCapture(self.camera_index, backend)
+            if not capture.isOpened():
+                capture.release()
+                continue
+
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+            warmed_up = False
+            for _ in range(10):
+                success, frame = capture.read()
+                if success and frame is not None:
+                    warmed_up = True
+                    break
+                time.sleep(0.1)
+
+            if warmed_up:
+                self.capture = capture
+                return
+
+            capture.release()
+
+        raise RuntimeError("Camera could not be opened")
 
     def read_frame(self):
         if self.capture is None:
