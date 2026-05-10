@@ -4,7 +4,7 @@ import numpy as np
 
 MIN_BRIGHTNESS = 35
 MAX_BRIGHTNESS = 230
-MIN_BLUR_SCORE = 25
+MIN_BLUR_SCORE = 10
 
 
 def check_face_quality(frame, faces, min_face_size: int = 80) -> dict:

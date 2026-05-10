@@ -10,6 +10,9 @@ class Config:
     device_code: str = os.getenv("DEVICE_CODE", "PI-CLASSROOM-001")
     device_token: str = os.getenv("DEVICE_TOKEN", "change-this-device-token")
     camera_index: int = int(os.getenv("CAMERA_INDEX", "0"))
+    autofocus_enabled: bool = os.getenv("CAMERA_AUTOFOCUS_ENABLED", "true").lower() == "true"
+    autofocus_mode: str = os.getenv("CAMERA_AUTOFOCUS_MODE", "continuous").strip().lower()
+    autofocus_warmup_seconds: float = float(os.getenv("CAMERA_AUTOFOCUS_WARMUP_SECONDS", "1.2"))
     show_camera_preview: bool = os.getenv("SHOW_CAMERA_PREVIEW", "false").lower() == "true"
     request_timeout: int = int(os.getenv("REQUEST_TIMEOUT", "10"))
     checkin_interval_seconds: int = int(os.getenv("CHECKIN_INTERVAL_SECONDS", "2"))

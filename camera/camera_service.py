@@ -1,6 +1,7 @@
 import time
 
 import cv2
+from config import config
 
 try:
     from picamera2 import Picamera2
@@ -27,6 +28,7 @@ class CameraService:
             )
             camera.configure(configuration)
             camera.start()
+            self._configure_autofocus(camera)
 
             warmed_up = False
             for _ in range(20):
@@ -44,6 +46,30 @@ class CameraService:
             self.camera = camera
         except Exception as error:
             raise RuntimeError("Camera could not be opened") from error
+
+    def _configure_autofocus(self, camera) -> None:
+        if not config.autofocus_enabled:
+            return
+
+        autofocus_mode = config.autofocus_mode
+        controls = {}
+
+        # Camera Module 3 supports autofocus through libcamera controls.
+        # Keep this guarded so non-autofocus camera modules still work.
+        if autofocus_mode == "continuous":
+            controls["AfMode"] = 2
+        elif autofocus_mode == "auto":
+            controls["AfMode"] = 1
+            controls["AfTrigger"] = 0
+        else:
+            return
+
+        try:
+            camera.set_controls(controls)
+            if config.autofocus_warmup_seconds > 0:
+                time.sleep(config.autofocus_warmup_seconds)
+        except Exception:
+            return
 
     def read_frame(self):
         if self.camera is None:
