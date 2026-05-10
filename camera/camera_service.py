@@ -8,6 +8,11 @@ try:
 except ImportError:  # pragma: no cover - only happens on non-Pi setups
     Picamera2 = None
 
+try:
+    from libcamera import controls as libcamera_controls
+except ImportError:  # pragma: no cover - only happens on non-Pi setups
+    libcamera_controls = None
+
 
 class CameraService:
     def __init__(self, camera_index: int = 0):
@@ -23,8 +28,8 @@ class CameraService:
 
         try:
             camera = Picamera2(camera_num=self.camera_index)
-            configuration = camera.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"}
+            configuration = camera.create_video_configuration(
+                main={"size": (config.camera_width, config.camera_height), "format": "RGB888"}
             )
             camera.configure(configuration)
             camera.start()
@@ -57,12 +62,16 @@ class CameraService:
         # Camera Module 3 supports autofocus through libcamera controls.
         # Keep this guarded so non-autofocus camera modules still work.
         if autofocus_mode == "continuous":
-            controls["AfMode"] = 2
+            controls["AfMode"] = self._get_af_mode_value("continuous")
         elif autofocus_mode == "auto":
-            controls["AfMode"] = 1
-            controls["AfTrigger"] = 0
+            controls["AfMode"] = self._get_af_mode_value("auto")
+            controls["AfTrigger"] = self._get_af_trigger_value()
         else:
             return
+
+        autofocus_speed = self._get_af_speed_value()
+        if autofocus_speed is not None:
+            controls["AfSpeed"] = autofocus_speed
 
         try:
             camera.set_controls(controls)
@@ -70,6 +79,28 @@ class CameraService:
                 time.sleep(config.autofocus_warmup_seconds)
         except Exception:
             return
+
+    def _get_af_mode_value(self, autofocus_mode: str):
+        if libcamera_controls is not None:
+            if autofocus_mode == "continuous":
+                return libcamera_controls.AfModeEnum.Continuous
+            if autofocus_mode == "auto":
+                return libcamera_controls.AfModeEnum.Auto
+        if autofocus_mode == "continuous":
+            return 2
+        return 1
+
+    def _get_af_trigger_value(self):
+        if libcamera_controls is not None:
+            return libcamera_controls.AfTriggerEnum.Start
+        return 0
+
+    def _get_af_speed_value(self):
+        if libcamera_controls is None:
+            return None
+        if config.autofocus_speed == "normal":
+            return libcamera_controls.AfSpeedEnum.Normal
+        return libcamera_controls.AfSpeedEnum.Fast
 
     def read_frame(self):
         if self.camera is None:
