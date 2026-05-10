@@ -32,10 +32,11 @@ python main.py
 
 ## Camera Module 3 Autofocus Setup
 
-This project now enables Camera Module 3 autofocus through the shared `CameraService`, so both:
+This project now enables Camera Module 3 autofocus through the shared `CameraService`, so all of these commands:
 
 - `python main.py`
 - `python capture_server.py`
+- `python manual_capture.py`
 
 use the same autofocus behavior automatically.
 
@@ -43,8 +44,11 @@ Recommended `.env` values for Camera Module 3:
 
 ```txt
 CAMERA_INDEX=0
+CAMERA_WIDTH=1280
+CAMERA_HEIGHT=720
 CAMERA_AUTOFOCUS_ENABLED=true
 CAMERA_AUTOFOCUS_MODE=continuous
+CAMERA_AUTOFOCUS_SPEED=fast
 CAMERA_AUTOFOCUS_WARMUP_SECONDS=1.2
 ```
 
@@ -52,6 +56,8 @@ Mode notes:
 
 - `continuous`: keeps autofocus adjusting while the camera is running
 - `auto`: triggers autofocus during startup, then continues with the captured stream
+- `fast`: tries to lock focus more aggressively, which is usually better for live FRAS use
+- `normal`: slower focus adjustments if `fast` becomes unstable on your Pi
 
 If autofocus causes issues on a different camera module, disable it with:
 
@@ -93,8 +99,11 @@ FRAS_API_BASE_URL=http://YOUR_WEB_APP_HOST:3000
 DEVICE_CODE=PI-CLASSROOM-001
 DEVICE_TOKEN=change-this-device-token
 CAMERA_INDEX=0
+CAMERA_WIDTH=1280
+CAMERA_HEIGHT=720
 CAMERA_AUTOFOCUS_ENABLED=true
 CAMERA_AUTOFOCUS_MODE=continuous
+CAMERA_AUTOFOCUS_SPEED=fast
 CAMERA_AUTOFOCUS_WARMUP_SECONDS=1.2
 ```
 
