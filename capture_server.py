@@ -123,8 +123,6 @@ def open_camera() -> dict:
         camera.show_preview(frame, "Camera ready")
         return {
             "cameraOpen": True,
-            "previewImageBase64": encode_frame_to_base64(frame),
-            "previewImageName": "preview.jpg",
         }
 
     return with_camera(action, keep_open=True)
