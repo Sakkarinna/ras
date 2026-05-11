@@ -29,7 +29,7 @@ class CameraService:
         try:
             camera = Picamera2(camera_num=self.camera_index)
             configuration = camera.create_video_configuration(
-                main={"size": (config.camera_width, config.camera_height), "format": "RGB888"}
+                main={"size": (config.camera_width, config.camera_height), "format": config.camera_pixel_format}
             )
             camera.configure(configuration)
             camera.start()
@@ -112,7 +112,14 @@ class CameraService:
 
         # Normalize Picamera2 frames to BGR so OpenCV preview, detection,
         # grayscale conversion, and encoding all use one consistent format.
-        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        if config.camera_capture_array_order == "RGB":
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        if config.camera_capture_array_order == "BGR":
+            return frame
+        raise RuntimeError(
+            f"Unsupported CAMERA_CAPTURE_ARRAY_ORDER: {config.camera_capture_array_order}. "
+            "Use RGB or BGR."
+        )
 
     def show_preview(self, frame, status_text: str = "", face_boxes=None) -> bool:
         preview_frame = frame.copy()

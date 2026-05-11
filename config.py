@@ -12,6 +12,8 @@ class Config:
     camera_index: int = int(os.getenv("CAMERA_INDEX", "0"))
     camera_width: int = int(os.getenv("CAMERA_WIDTH", "1280"))
     camera_height: int = int(os.getenv("CAMERA_HEIGHT", "720"))
+    camera_pixel_format: str = os.getenv("CAMERA_PIXEL_FORMAT", "RGB888").strip().upper()
+    camera_capture_array_order: str = os.getenv("CAMERA_CAPTURE_ARRAY_ORDER", "BGR").strip().upper()
     autofocus_enabled: bool = os.getenv("CAMERA_AUTOFOCUS_ENABLED", "true").lower() == "true"
     autofocus_mode: str = os.getenv("CAMERA_AUTOFOCUS_MODE", "continuous").strip().lower()
     autofocus_speed: str = os.getenv("CAMERA_AUTOFOCUS_SPEED", "fast").strip().lower()

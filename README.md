@@ -48,6 +48,8 @@ Recommended `.env` values for Camera Module 3:
 CAMERA_INDEX=0
 CAMERA_WIDTH=1280
 CAMERA_HEIGHT=720
+CAMERA_PIXEL_FORMAT=RGB888
+CAMERA_CAPTURE_ARRAY_ORDER=BGR
 CAMERA_AUTOFOCUS_ENABLED=true
 CAMERA_AUTOFOCUS_MODE=continuous
 CAMERA_AUTOFOCUS_SPEED=fast
@@ -60,6 +62,7 @@ Mode notes:
 - `auto`: triggers autofocus during startup, then continues with the captured stream
 - `fast`: tries to lock focus more aggressively, which is usually better for live FRAS use
 - `normal`: slower focus adjustments if `fast` becomes unstable on your Pi
+- `CAMERA_CAPTURE_ARRAY_ORDER`: tells FRAS whether `capture_array()` is effectively arriving as `RGB` or `BGR` on your Pi before OpenCV processing. If faces or preview look blue/red swapped, try `BGR` first, then `RGB`.
 
 If autofocus causes issues on a different camera module, disable it with:
 
