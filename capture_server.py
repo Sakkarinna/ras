@@ -146,6 +146,18 @@ def stop_preview_loop() -> None:
     PREVIEW_THREAD = None
 
 
+def run_with_preview_paused(action, *, resume_status_text: str = "Camera ready"):
+    preview_was_running = PREVIEW_THREAD is not None and PREVIEW_THREAD.is_alive()
+    if preview_was_running:
+      stop_preview_loop()
+
+    try:
+        return action()
+    finally:
+        if preview_was_running and ACTIVE_CAMERA is not None:
+            start_preview_loop(resume_status_text)
+
+
 def with_camera(action, *, keep_open: bool = False):
     with CAMERA_LOCK:
         camera = get_active_camera() if keep_open else build_camera()
@@ -178,7 +190,10 @@ def capture_preview() -> dict:
             "previewImageName": "preview.jpg",
         }
 
-    return with_camera(action, keep_open=True)
+    return run_with_preview_paused(
+        lambda: with_camera(action, keep_open=True),
+        resume_status_text="Camera ready",
+    )
 
 
 def capture_still() -> dict:
@@ -191,7 +206,10 @@ def capture_still() -> dict:
             "imageName": "photo.jpg",
         }
 
-    return with_camera(action, keep_open=True)
+    return run_with_preview_paused(
+        lambda: with_camera(action, keep_open=True),
+        resume_status_text="Camera ready",
+    )
 
 
 def capture_video(duration_seconds: int = 10) -> dict:
@@ -236,7 +254,10 @@ def capture_video(duration_seconds: int = 10) -> dict:
             except OSError:
                 pass
 
-    return with_camera(action, keep_open=True)
+    return run_with_preview_paused(
+        lambda: with_camera(action, keep_open=True),
+        resume_status_text="Camera ready",
+    )
 
 
 def ensure_registered() -> int | None:
