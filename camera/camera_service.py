@@ -29,7 +29,7 @@ class CameraService:
         try:
             camera = Picamera2(camera_num=self.camera_index)
             configuration = camera.create_video_configuration(
-                main={"size": (config.camera_width, config.camera_height), "format": "RGB888"}
+                main={"size": (config.camera_width, config.camera_height), "format": "BGR888"}
             )
             camera.configure(configuration)
             camera.start()
@@ -110,8 +110,7 @@ class CameraService:
         if frame is None or getattr(frame, "size", 0) == 0:
             raise RuntimeError("Could not read frame from camera")
 
-        # Picamera2 returns RGB arrays; OpenCV processing in this app expects BGR.
-        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        return frame
 
     def show_preview(self, frame, status_text: str = "", face_boxes=None) -> bool:
         preview_frame = frame.copy()

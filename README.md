@@ -30,6 +30,8 @@ python main.py
 
 `Picamera2` is installed from Raspberry Pi OS packages, not from `pip`. The `--system-site-packages` flag lets the virtual environment use that system-installed camera library.
 
+The FRAS Pi pipeline keeps camera frames in `BGR` for OpenCV processing, then converts the cropped face image to `RGB` right before encoding and sending it to the server. This avoids the common red/blue channel swap seen when the camera, OpenCV, and browser or AI paths disagree on color order.
+
 ## Camera Module 3 Autofocus Setup
 
 This project now enables Camera Module 3 autofocus through the shared `CameraService`, so all of these commands:

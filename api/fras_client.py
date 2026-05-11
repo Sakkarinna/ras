@@ -13,6 +13,14 @@ class FrasClient:
     def get_device_by_code(self, device_code: str) -> dict:
         return self.get(f"{self.base_url}/api/devices/by-code/{device_code}")
 
+    def register_device(self, device_code: str, ip_address: str | None = None) -> dict:
+        payload = {
+            "deviceCode": device_code,
+        }
+        if ip_address:
+            payload["ipAddress"] = ip_address
+        return self.post(f"{self.base_url}/api/devices/register", payload)
+
     def get_active_session(self, device_code: str) -> dict:
         return self.get(
             f"{self.base_url}/api/attendance-sessions/active",

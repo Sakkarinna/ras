@@ -1,4 +1,6 @@
 import time
+from socket import AF_INET, SOCK_DGRAM, socket
+from urllib.parse import urlparse
 
 from api.fras_client import FrasClient
 from camera.camera_service import CameraService
@@ -11,6 +13,21 @@ from utils.image_utils import image_to_base64, resize_face
 from utils.logger import setup_logger
 
 logger = setup_logger()
+
+
+def resolve_local_ip(api_base_url: str) -> str | None:
+    parsed = urlparse(api_base_url)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if not host:
+        return None
+
+    try:
+        with socket(AF_INET, SOCK_DGRAM) as sock:
+            sock.connect((host, port))
+            return sock.getsockname()[0]
+    except OSError:
+        return None
 
 
 def show_preview_frame(camera: CameraService, face_detector: FaceDetector, status_text: str) -> bool:
@@ -31,6 +48,7 @@ def main() -> None:
     face_detector = FaceDetector()
     client = FrasClient(config.api_base_url, config.device_token, config.request_timeout)
     device_id: int | None = None
+    device_ip_address = resolve_local_ip(config.api_base_url)
     last_heartbeat = 0.0
     last_submission = 0.0
 
@@ -39,13 +57,10 @@ def main() -> None:
         logger.info("Camera started successfully")
 
         while True:
-            device_response = client.get_device_by_code(config.device_code)
+            device_response = client.register_device(config.device_code, device_ip_address)
             if not device_response["ok"]:
                 error_message = device_response["error"]
-                if "Device not found" in error_message:
-                    show_warning("Device not registered")
-                else:
-                    show_warning("Server unavailable")
+                show_warning("Server unavailable")
                 logger.warning("Device verification failed: %s", error_message)
                 time.sleep(max(config.checkin_interval_seconds, 5))
                 continue
@@ -63,6 +78,8 @@ def main() -> None:
                 }
                 if not health["diskOk"]:
                     health["issueSummary"] = "Low disk space on Raspberry Pi"
+                if device_ip_address:
+                    health["ipAddress"] = device_ip_address
                 heartbeat = client.send_heartbeat(int(device_id), health)
                 if not heartbeat["ok"]:
                     logger.warning("Heartbeat failed: %s", heartbeat["error"])
@@ -121,6 +138,8 @@ def main() -> None:
                     }
                     if not health["diskOk"]:
                         health["issueSummary"] = "Low disk space on Raspberry Pi"
+                    if device_ip_address:
+                        health["ipAddress"] = device_ip_address
                     heartbeat = client.send_heartbeat(int(device_id), health)
                     if not heartbeat["ok"]:
                         logger.warning("Heartbeat failed: %s", heartbeat["error"])
