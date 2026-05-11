@@ -52,6 +52,9 @@ DEVICE_ID: int | None = None
 DEVICE_IP_ADDRESS: str | None = None
 LAST_HEARTBEAT = 0.0
 ACTIVE_CAMERA: CameraService | None = None
+PREVIEW_THREAD: threading.Thread | None = None
+PREVIEW_STOP_EVENT = threading.Event()
+PREVIEW_STATUS_TEXT = "Camera ready"
 
 
 def get_client() -> FrasClient:
@@ -107,6 +110,42 @@ def close_active_camera() -> None:
         ACTIVE_CAMERA = None
 
 
+def _preview_loop() -> None:
+    while not PREVIEW_STOP_EVENT.is_set():
+        try:
+            with CAMERA_LOCK:
+                if ACTIVE_CAMERA is None:
+                    break
+                frame = ACTIVE_CAMERA.read_frame()
+                ACTIVE_CAMERA.show_preview(frame, PREVIEW_STATUS_TEXT)
+            time.sleep(0.03)
+        except Exception as error:
+            logger.warning("Live preview update failed: %s", error)
+            time.sleep(0.1)
+
+
+def start_preview_loop(status_text: str = "Camera ready") -> None:
+    global PREVIEW_THREAD
+    global PREVIEW_STATUS_TEXT
+
+    PREVIEW_STATUS_TEXT = status_text
+    if PREVIEW_THREAD is not None and PREVIEW_THREAD.is_alive():
+        return
+
+    PREVIEW_STOP_EVENT.clear()
+    PREVIEW_THREAD = threading.Thread(target=_preview_loop, daemon=True)
+    PREVIEW_THREAD.start()
+
+
+def stop_preview_loop() -> None:
+    global PREVIEW_THREAD
+
+    PREVIEW_STOP_EVENT.set()
+    if PREVIEW_THREAD is not None and PREVIEW_THREAD.is_alive():
+        PREVIEW_THREAD.join(timeout=1.0)
+    PREVIEW_THREAD = None
+
+
 def with_camera(action, *, keep_open: bool = False):
     with CAMERA_LOCK:
         camera = get_active_camera() if keep_open else build_camera()
@@ -118,17 +157,13 @@ def with_camera(action, *, keep_open: bool = False):
 
 
 def open_camera() -> dict:
-    def action(camera: CameraService) -> dict:
-        frame = camera.read_frame()
-        camera.show_preview(frame, "Camera ready")
-        return {
-            "cameraOpen": True,
-        }
-
-    return with_camera(action, keep_open=True)
+    with_camera(lambda _camera: {"cameraOpen": True}, keep_open=True)
+    start_preview_loop("Camera ready")
+    return {"cameraOpen": True}
 
 
 def close_camera() -> dict:
+    stop_preview_loop()
     with CAMERA_LOCK:
         close_active_camera()
     return {"cameraOpen": False}
