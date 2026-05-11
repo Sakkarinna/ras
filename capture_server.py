@@ -51,6 +51,7 @@ CAMERA_LOCK = threading.Lock()
 DEVICE_ID: int | None = None
 DEVICE_IP_ADDRESS: str | None = None
 LAST_HEARTBEAT = 0.0
+ACTIVE_CAMERA: CameraService | None = None
 
 
 def get_client() -> FrasClient:
@@ -90,13 +91,49 @@ def build_camera() -> CameraService:
     return camera
 
 
-def with_camera(action):
+def get_active_camera() -> CameraService:
+    global ACTIVE_CAMERA
+
+    if ACTIVE_CAMERA is None:
+        ACTIVE_CAMERA = build_camera()
+    return ACTIVE_CAMERA
+
+
+def close_active_camera() -> None:
+    global ACTIVE_CAMERA
+
+    if ACTIVE_CAMERA is not None:
+        ACTIVE_CAMERA.release()
+        ACTIVE_CAMERA = None
+
+
+def with_camera(action, *, keep_open: bool = False):
     with CAMERA_LOCK:
-        camera = build_camera()
+        camera = get_active_camera() if keep_open else build_camera()
         try:
             return action(camera)
         finally:
-            camera.release()
+            if not keep_open:
+                camera.release()
+
+
+def open_camera() -> dict:
+    def action(camera: CameraService) -> dict:
+        frame = camera.read_frame()
+        camera.show_preview(frame, "Camera ready")
+        return {
+            "cameraOpen": True,
+            "previewImageBase64": encode_frame_to_base64(frame),
+            "previewImageName": "preview.jpg",
+        }
+
+    return with_camera(action, keep_open=True)
+
+
+def close_camera() -> dict:
+    with CAMERA_LOCK:
+        close_active_camera()
+    return {"cameraOpen": False}
 
 
 def capture_preview() -> dict:
@@ -108,7 +145,7 @@ def capture_preview() -> dict:
             "previewImageName": "preview.jpg",
         }
 
-    return with_camera(action)
+    return with_camera(action, keep_open=True)
 
 
 def capture_still() -> dict:
@@ -121,7 +158,7 @@ def capture_still() -> dict:
             "imageName": "photo.jpg",
         }
 
-    return with_camera(action)
+    return with_camera(action, keep_open=True)
 
 
 def capture_video(duration_seconds: int = 10) -> dict:
@@ -166,7 +203,7 @@ def capture_video(duration_seconds: int = 10) -> dict:
             except OSError:
                 pass
 
-    return with_camera(action)
+    return with_camera(action, keep_open=True)
 
 
 def ensure_registered() -> int | None:
@@ -208,7 +245,7 @@ def probe_camera_ready() -> bool:
             frame = camera.read_frame()
             return frame is not None and getattr(frame, "size", 0) > 0
 
-        return bool(with_camera(action))
+        return bool(with_camera(action, keep_open=ACTIVE_CAMERA is not None))
     except Exception as error:
         logger.warning("Camera probe failed: %s", error)
         return False
@@ -268,7 +305,11 @@ class CaptureHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             capture_type = str(payload.get("captureType", "")).strip().upper()
-            if capture_type == "PREVIEW":
+            if capture_type == "OPEN":
+                result = open_camera()
+            elif capture_type == "CLOSE":
+                result = close_camera()
+            elif capture_type == "PREVIEW":
                 result = capture_preview()
             elif capture_type == "STILL":
                 result = capture_still()
