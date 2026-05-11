@@ -110,15 +110,35 @@ class CameraService:
         if frame is None or getattr(frame, "size", 0) == 0:
             raise RuntimeError("Could not read frame from camera")
 
+        return self._normalize_frame_to_bgr(frame)
+
+    def _normalize_frame_to_bgr(self, frame):
+        if len(frame.shape) == 2:
+            return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+
+        channel_count = frame.shape[2] if len(frame.shape) >= 3 else 0
+
         # Normalize Picamera2 frames to BGR so OpenCV preview, detection,
         # grayscale conversion, and encoding all use one consistent format.
         if config.camera_capture_array_order == "RGB":
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        if config.camera_capture_array_order == "BGR":
-            return frame
+            if channel_count == 3:
+                return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            if channel_count == 4:
+                return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+        elif config.camera_capture_array_order == "BGR":
+            if channel_count == 3:
+                return frame
+            if channel_count == 4:
+                return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        else:
+            raise RuntimeError(
+                f"Unsupported CAMERA_CAPTURE_ARRAY_ORDER: {config.camera_capture_array_order}. "
+                "Use RGB or BGR."
+            )
+
         raise RuntimeError(
-            f"Unsupported CAMERA_CAPTURE_ARRAY_ORDER: {config.camera_capture_array_order}. "
-            "Use RGB or BGR."
+            f"Unsupported camera frame shape {getattr(frame, 'shape', None)} for "
+            f"CAMERA_CAPTURE_ARRAY_ORDER={config.camera_capture_array_order}."
         )
 
     def show_preview(self, frame, status_text: str = "", face_boxes=None) -> bool:
