@@ -4,15 +4,24 @@ import argparse
 import base64
 import json
 import tempfile
+import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socket import AF_INET, SOCK_DGRAM, socket
+from urllib.parse import urlparse
 
 import cv2
 
+from api.fras_client import FrasClient
 from camera.camera_service import CameraService
 from config import config
+from device.health_check import check_disk_space, check_server
+from utils.logger import setup_logger
+
+
+logger = setup_logger("fras-capture-server")
 
 
 def encode_frame_to_base64(frame) -> str:
@@ -31,6 +40,40 @@ class CaptureServerConfig:
     port = 8002
     device_token = config.device_token
     camera_index = config.camera_index
+    api_base_url = config.api_base_url
+    device_code = config.device_code
+    request_timeout = config.request_timeout
+    checkin_interval_seconds = config.checkin_interval_seconds
+    heartbeat_interval_seconds = config.heartbeat_interval_seconds
+
+
+CAMERA_LOCK = threading.Lock()
+DEVICE_ID: int | None = None
+DEVICE_IP_ADDRESS: str | None = None
+LAST_HEARTBEAT = 0.0
+
+
+def get_client() -> FrasClient:
+    return FrasClient(
+        CaptureServerConfig.api_base_url,
+        CaptureServerConfig.device_token,
+        CaptureServerConfig.request_timeout,
+    )
+
+
+def resolve_local_ip(api_base_url: str) -> str | None:
+    parsed = urlparse(api_base_url)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if not host:
+        return None
+
+    try:
+        with socket(AF_INET, SOCK_DGRAM) as sock:
+            sock.connect((host, port))
+            return sock.getsockname()[0]
+    except OSError:
+        return None
 
 
 def is_authorized(handler: BaseHTTPRequestHandler) -> bool:
@@ -47,82 +90,157 @@ def build_camera() -> CameraService:
     return camera
 
 
+def with_camera(action):
+    with CAMERA_LOCK:
+        camera = build_camera()
+        try:
+            return action(camera)
+        finally:
+            camera.release()
+
+
 def capture_preview() -> dict:
-    camera = build_camera()
-    try:
+    def action(camera: CameraService) -> dict:
         frame = camera.read_frame()
         camera.show_preview(frame, "Preview face")
         return {
             "previewImageBase64": encode_frame_to_base64(frame),
             "previewImageName": "preview.jpg",
         }
-    finally:
-        camera.release()
+
+    return with_camera(action)
 
 
 def capture_still() -> dict:
-    camera = build_camera()
-    try:
+    def action(camera: CameraService) -> dict:
         frame = camera.read_frame()
         camera.show_preview(frame, "Capture still")
         encoded = encode_frame_to_base64(frame)
         return {
-            "previewImageBase64": encoded,
-            "previewImageName": "preview.jpg",
             "imageBase64": encoded,
             "imageName": "photo.jpg",
         }
-    finally:
-        camera.release()
+
+    return with_camera(action)
 
 
 def capture_video(duration_seconds: int = 10) -> dict:
-    camera = build_camera()
-    temp_dir = Path(tempfile.mkdtemp(prefix="fras-pi-capture-"))
-    video_path = temp_dir / "capture.mp4"
-    writer = None
-    preview_base64 = None
-    try:
-        first_frame = camera.read_frame()
-        height, width = first_frame.shape[:2]
-        fps = 20.0
-        writer = cv2.VideoWriter(
-            str(video_path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            fps,
-            (width, height),
-        )
-        if not writer.isOpened():
-            raise RuntimeError("Unable to initialize video writer.")
-
-        start = time.time()
-        frame = first_frame
-        while time.time() - start < duration_seconds:
-            if preview_base64 is None:
-                preview_base64 = encode_frame_to_base64(frame)
-            writer.write(frame)
-            camera.show_preview(frame, "Recording 10s video")
-            time.sleep(0.02)
-            frame = camera.read_frame()
-
-        writer.release()
+    def action(camera: CameraService) -> dict:
+        temp_dir = Path(tempfile.mkdtemp(prefix="fras-pi-capture-"))
+        video_path = temp_dir / "capture.mp4"
         writer = None
-        return {
-            "previewImageBase64": preview_base64,
-            "previewImageName": "preview.jpg",
-            "videoBase64": encode_file_to_base64(video_path),
-            "videoName": "capture.mp4",
-        }
-    finally:
-        camera.release()
-        if writer is not None:
-            writer.release()
         try:
-            if video_path.exists():
-                video_path.unlink()
-            temp_dir.rmdir()
-        except OSError:
-            pass
+            first_frame = camera.read_frame()
+            height, width = first_frame.shape[:2]
+            fps = 20.0
+            writer = cv2.VideoWriter(
+                str(video_path),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                fps,
+                (width, height),
+            )
+            if not writer.isOpened():
+                raise RuntimeError("Unable to initialize video writer.")
+
+            start = time.time()
+            frame = first_frame
+            while time.time() - start < duration_seconds:
+                writer.write(frame)
+                camera.show_preview(frame, "Recording 10s video")
+                time.sleep(0.02)
+                frame = camera.read_frame()
+
+            writer.release()
+            writer = None
+            return {
+                "videoBase64": encode_file_to_base64(video_path),
+                "videoName": "capture.mp4",
+            }
+        finally:
+            if writer is not None:
+                writer.release()
+            try:
+                if video_path.exists():
+                    video_path.unlink()
+                temp_dir.rmdir()
+            except OSError:
+                pass
+
+    return with_camera(action)
+
+
+def ensure_registered() -> int | None:
+    global DEVICE_ID
+    global DEVICE_IP_ADDRESS
+
+    if DEVICE_IP_ADDRESS is None:
+        DEVICE_IP_ADDRESS = resolve_local_ip(CaptureServerConfig.api_base_url)
+
+    response = get_client().register_device(CaptureServerConfig.device_code, DEVICE_IP_ADDRESS)
+    if not response["ok"]:
+        logger.warning("Device registration failed: %s", response["error"])
+        return DEVICE_ID
+
+    payload = response["data"].get("data", response["data"])
+    DEVICE_ID = payload.get("deviceId") or payload.get("device_id")
+    return int(DEVICE_ID) if DEVICE_ID is not None else None
+
+
+def build_health_payload(camera_ready: bool) -> dict:
+    health = {
+        "cameraReady": camera_ready,
+        "diskOk": check_disk_space(),
+        "serverReachable": check_server(CaptureServerConfig.api_base_url, CaptureServerConfig.request_timeout),
+        "issueSummary": None,
+    }
+    if not camera_ready:
+        health["issueSummary"] = "Camera unavailable on Raspberry Pi"
+    elif not health["diskOk"]:
+        health["issueSummary"] = "Low disk space on Raspberry Pi"
+    if DEVICE_IP_ADDRESS:
+        health["ipAddress"] = DEVICE_IP_ADDRESS
+    return health
+
+
+def probe_camera_ready() -> bool:
+    try:
+        def action(camera: CameraService) -> bool:
+            frame = camera.read_frame()
+            return frame is not None and getattr(frame, "size", 0) > 0
+
+        return bool(with_camera(action))
+    except Exception as error:
+        logger.warning("Camera probe failed: %s", error)
+        return False
+
+
+def send_capture_server_heartbeat(force: bool = False) -> None:
+    global LAST_HEARTBEAT
+
+    device_id = ensure_registered()
+    if not device_id:
+        return
+
+    now = time.monotonic()
+    if not force and now - LAST_HEARTBEAT < CaptureServerConfig.heartbeat_interval_seconds:
+        return
+
+    camera_ready = probe_camera_ready()
+    health = build_health_payload(camera_ready)
+
+    heartbeat = get_client().send_heartbeat(int(device_id), health)
+    if not heartbeat["ok"]:
+        logger.warning("Capture server heartbeat failed: %s", heartbeat["error"])
+    LAST_HEARTBEAT = now
+
+
+def heartbeat_loop() -> None:
+    while True:
+        try:
+            send_capture_server_heartbeat()
+        except Exception:
+            logger.exception("Unexpected capture server heartbeat error")
+        time.sleep(CaptureServerConfig.checkin_interval_seconds)
 
 
 class CaptureHandler(BaseHTTPRequestHandler):
@@ -130,6 +248,10 @@ class CaptureHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
+            try:
+                send_capture_server_heartbeat(force=True)
+            except Exception:
+                logger.exception("Health-triggered heartbeat failed")
             self._send_json(HTTPStatus.OK, {"data": {"status": "ok"}})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -156,8 +278,17 @@ class CaptureHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid capture type"})
                 return
 
+            try:
+                send_capture_server_heartbeat(force=True)
+            except Exception:
+                logger.exception("Post-capture heartbeat failed")
+
             self._send_json(HTTPStatus.OK, {"data": result})
         except Exception as error:
+            try:
+                send_capture_server_heartbeat(force=True)
+            except Exception:
+                logger.exception("Failure heartbeat after capture error failed")
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(error)})
 
     def log_message(self, format: str, *args) -> None:
@@ -192,6 +323,9 @@ def main() -> None:
     CaptureServerConfig.port = args.port
     CaptureServerConfig.camera_index = args.camera_index
     CaptureServerConfig.device_token = args.device_token
+
+    heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+    heartbeat_thread.start()
 
     server = ThreadingHTTPServer((CaptureServerConfig.host, CaptureServerConfig.port), CaptureHandler)
     print(
